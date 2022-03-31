@@ -28,16 +28,17 @@ test_altstack_module1 = executable('test_altstack_module1', [
 )
 #//***********************************************************/
 MEMORY_LIMITS_MB = [ 
-  '5',
-  '4',
-  '30',
+  '32',
 ]
 MEMORY_REQUESTS_MB = [ 
  '24',
+ '48',
+ '128',
+ '1024',
 ]
 
 tests = [
-  ['m1.log', 'test altstack module 1', test_altstack_module1, 'wrap', MEMORY_LIMITS_MB, MEMORY_REQUESTS_MB, ],
+  ['m1.log', 'test altstack module ', test_altstack_module1, 'wrap', MEMORY_LIMITS_MB, MEMORY_REQUESTS_MB, ],
 ]
 #//***********************************************************/
 
@@ -48,9 +49,9 @@ test_env.set('__BD', meson.current_build_dir())
 test_env.set('__SD', meson.current_source_dir())
 #//***********************************************************/
 foreach i : tests
-foreach stk : i[4]
-foreach vla : i[5]
-test(i[1], passh, args: [ '-L', i[0], '--', i[2], i[3], stk, vla, ], env: test_env)
+foreach MEMORY_LIMIT_MB : i[4]
+foreach MEMORY_REQ_MB : i[5]
+  test(i[1] + MEMORY_REQ_MB + 'MB' + '/' + MEMORY_LIMIT_MB + 'MB', passh, args: [ '-L', i[0], '--', i[2], i[3], MEMORY_LIMIT_MB, MEMORY_REQ_MB, ], env: test_env)
 endforeach
 endforeach
 endforeach
