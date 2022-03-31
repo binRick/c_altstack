@@ -27,23 +27,17 @@ test_altstack_module1 = executable('test_altstack_module1', [
   dependencies : [],
 )
 #//***********************************************************/
-stk_maxes = [ 
+MEMORY_LIMITS_MB = [ 
   '5',
-  '50',
-  '500',
-  '1100',
-  '1500',
+  '4',
+  '30',
 ]
-vla_maxes = [ 
- '5',
- '10',
- '50',
- '150',
- '250',
+MEMORY_REQUESTS_MB = [ 
+ '24',
 ]
 
 tests = [
-  ['m1.log', 'test altstack module 1', test_altstack_module1, 'wrap', stk_maxes, vla_maxes, ],
+  ['m1.log', 'test altstack module 1', test_altstack_module1, 'wrap', MEMORY_LIMITS_MB, MEMORY_REQUESTS_MB, ],
 ]
 #//***********************************************************/
 

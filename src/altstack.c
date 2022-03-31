@@ -1,6 +1,32 @@
+/******************************************************************************************/
 #include "altstack.h"
+/******************************************************************************************/
 #define MICROSSECONDS_IN_SECONDS    1000000
-
+#define CM_ALTSACK_MEM_ADDR         0xaced
+/******************************************************************************************/
+#define MICROSECONDS_DURATION_TO_STRING(DUR)    { \
+    (DUR > 1000 * 1000) ? return(milliseconds_to_long_string(DUR / 1000) : return milliseconds_to_string(DUR / 1000)); }
+#define CM_ALTSTACK_SETUP_MEMORY_USAGE_COPY_COMMANDS                                                \
+  snprintf(CM_ALTSTACK_MAPS, sizeof(CM_ALTSTACK_MAPS), "egrep '\\[stack' /proc/%d/maps", getpid()); \
+  snprintf(CM_ALTSTACK_RSS, sizeof(CM_ALTSTACK_RSS), "egrep '^VmRSS' /proc/%d/status", getpid());
+#define CM_ALTSTACK_ASSIGN_MEMORY_AND_USAGE_IN_MEGABYTES \
+  stk_max = strtol(argv[1], NULL, 0) * 1024 * 1024;      \
+  vla_sz  = strtol(argv[2], NULL, 0) * 1024 * 1024;      \
+/******************************************************************************************/
+#define __cm_altstack_ok__(x)                   ({ int __r = (x); if (__r == -1) err(1, #x); __r; })
+#define CM_ALTSTACK_ASSIGN_MEMORY_AND_USAGE_IN_MEGABYTES \
+  stk_max = strtol(argv[1], NULL, 0) * 1024 * 1024;      \
+  vla_sz  = strtol(argv[2], NULL, 0) * 1024 * 1024;
+#define CM_ALTSTACK_ASSERT_MEMORY_AND_USAGE \
+  assert(stk_max > 0 && vla_sz > 0);
+#define bang(x)                                                   \
+  (state.elen += snprintf(state.ebuf + state.elen,                \
+                          sizeof(state.ebuf) - state.elen,        \
+                          "%s(altstack@%d) %s%s%s",               \
+                          state.elen  ? "; " : "", __LINE__, (x), \
+                          errno ? ": " : "",                      \
+                          errno ? strerror(errno) : ""))
+/******************************************************************************************/
 #include "../human/ms.c"
 #include <assert.h>
 #include <errno.h>
@@ -11,6 +37,15 @@
 #include <sys/mman.h>
 #include <unistd.h>
 
+
+/******************************************************************************************/
+unsigned long __ts__(){
+  struct timeval tmp;
+
+  gettimeofday(&(tmp), NULL);
+  return((tmp.tv_usec) + (tmp.tv_sec * MICROSSECONDS_IN_SECONDS));
+}
+/******************************************************************************************/
 static __thread struct altstack_state {
   char     ebuf[ALTSTACK_ERR_MAXLEN];
   unsigned elen;
@@ -19,17 +54,13 @@ static __thread struct altstack_state {
   rlim_t   max;
   void     *(*fn)(void *);
   void     *arg, *out;
-} state;
-
-#define bang(x)                                                   \
-  (state.elen += snprintf(state.ebuf + state.elen,                \
-                          sizeof(state.ebuf) - state.elen,        \
-                          "%s(altstack@%d) %s%s%s",               \
-                          state.elen  ? "; " : "", __LINE__, (x), \
-                          errno ? ": " : "",                      \
-                          errno ? strerror(errno) : ""))
+}                      state;
+/******************************************************************************************/
+char                   __cm_altstack_maps__[128], __cm_altstack_rss__[128];
+volatile unsigned long CM_ALTSACK_SLEEP_US = 0;
 
 
+/******************************************************************************************/
 void altstack_perror(void){
   fprintf(stderr, "%s\n", state.ebuf);
 }
@@ -67,6 +98,46 @@ ptrdiff_t altstack_used(void) {
 }
 
 
+/******************************************************************************************/
+static void __cm_altstack_stack_used__(void) {
+  //fprintf(stderr, "stack used: %ld\n", altstack_used());
+  int64_t __asu = altstack_used();
+
+  fprintf(stderr, AC_RESETALL AC_BOLD AC_REVERSED AC_GREEN "stack used: %s\n" AC_RESETALL,
+          (__asu > 0) ? bytes_to_string(__asu) : "Nan"
+          );
+}
+/******************************************************************************************/
+#define CM_ALTSTACK_MICROSECONDS            __ts__
+#define CM_ALTSTACK_WRAP_FUNCTION           __cm_request_memory__
+#define CM_ALTSTACK_PRINT_STACK_USED        __cm_altstack_stack_used__
+#define CM_ALTSTACK_MAPS                    __cm_altstack_maps__
+#define CM_ALTSTACK_RSS                     __cm_altstack_rss__
+#define CM_ALTSTACK_COLLECTION_FUNCTIONS    __cm_altstack_ok__
+#define CM_ALTSTACK_EXECUTE_MEMORY_USAGE_COMMANDS             \
+  CM_ALTSTACK_COLLECTION_FUNCTIONS(system(CM_ALTSTACK_MAPS)); \
+  CM_ALTSTACK_COLLECTION_FUNCTIONS(system(CM_ALTSTACK_RSS));  \
+/******************************************************************************************/
+
+
+/******************************************************************************************/
+static void *__cm_request_memory__(void *arg){
+  char p[(long)arg];
+
+  memset(p, 0, sizeof(p));
+  CM_ALTSTACK_EXECUTE_MEMORY_USAGE_COMMANDS
+  CM_ALTSTACK_PRINT_STACK_USED();
+
+  if (CM_ALTSACK_SLEEP_US > 0) {
+    usleep(CM_ALTSACK_SLEEP_US);
+  }
+  return((void *)CM_ALTSACK_MEM_ADDR);
+}
+
+
+/******************************************************************************************/
+
+
 int altstack(rlim_t max, void *(*fn)(void *), void *arg, void **out){
   long             pgsz = sysconf(_SC_PAGESIZE);
   int              ret = -1, undo = 0;
@@ -87,13 +158,10 @@ int altstack(rlim_t max, void *(*fn)(void *), void *arg, void **out){
   if (out) {
     *out = NULL;
   }
-
-  // if the first page below the mapping is in use, we get max-pgsz usable bytes
-  // add pgsz to max to guarantee at least max usable bytes
   max += pgsz;
-
   ok(getrlimit(RLIMIT_STACK, &rl_save), 1);
   ok(setrlimit(RLIMIT_STACK, &(struct rlimit) { state.max, rl_save.rlim_max }), 1);
+
   undo++;
 
   ok(m = mmap(NULL, max, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS | MAP_GROWSDOWN | MAP_NORESERVE, -1, 0), 1);
@@ -144,7 +212,6 @@ out:
   case 1:
     ok(setrlimit(RLIMIT_STACK, &rl_save), 0);
   }
-
   if (errno_save) {
     errno = errno_save;
   }
@@ -152,63 +219,6 @@ out:
 } /* altstack */
 
 
-/******************************************************************************************/
-#define __cm_altstack_ok__(x)    ({ int __r = (x); if (__r == -1) err(1, #x); __r; })
-char __cm_altstack_maps__[128], __cm_altstack_rss__[128];
-
-
-static void __cm_altstack_stack_used__(void) {
-  fprintf(stderr, "stack used: %ld\n", altstack_used());
-}
-/******************************************************************************************/
-#define CM_ALTSACK_MEM_ADDR                 0xaced
-#define CM_ALTSTACK_PRINT_STACK_USED        __cm_altstack_stack_used__
-#define CM_ALTSTACK_MAPS                    __cm_altstack_maps__
-#define CM_ALTSTACK_RSS                     __cm_altstack_rss__
-#define CM_ALTSTACK_COLLECTION_FUNCTIONS    __cm_altstack_ok__
-#define CM_ALTSTACK_EXECUTE_MEMORY_USAGE_COMMANDS             \
-  CM_ALTSTACK_COLLECTION_FUNCTIONS(system(CM_ALTSTACK_MAPS)); \
-  CM_ALTSTACK_COLLECTION_FUNCTIONS(system(CM_ALTSTACK_RSS));  \
-
-/******************************************************************************************/
-static void *cm_wrap_fn(void *arg){
-  char p[(long)arg];
-
-  memset(p, 0, sizeof(p));
-  return((void *)CM_ALTSACK_MEM_ADDR);
-}
-/******************************************************************************************/
-#define CM_ALTSTACK_WRAP_FUNCTION    cm_wrap_fn
-
-
-/******************************************************************************************/
-
-#define CM_ALTSTACK_SETUP_MEMORY_USAGE_COPY_COMMANDS                                                \
-  snprintf(CM_ALTSTACK_MAPS, sizeof(CM_ALTSTACK_MAPS), "egrep '\\[stack' /proc/%d/maps", getpid()); \
-  snprintf(CM_ALTSTACK_RSS, sizeof(CM_ALTSTACK_RSS), "egrep '^VmRSS' /proc/%d/status", getpid());
-
-#define CM_ALTSTACK_ASSIGN_MEMORY_AND_USAGE_IN_MEGABYTES \
-  stk_max = strtol(argv[1], NULL, 0) * 1024 * 1024;      \
-  vla_sz  = strtol(argv[2], NULL, 0) * 1024 * 1024;      \
-
-#define CM_ALTSTACK_ASSERT_MEMORY_AND_USAGE \
-  assert(stk_max > 0 && vla_sz > 0);        \
-
-/******************************************************************************************/
-unsigned long __ts__(){
-  struct timeval tmp;
-
-  gettimeofday(&(tmp), NULL);
-  return((tmp.tv_usec) + (tmp.tv_sec * MICROSSECONDS_IN_SECONDS));
-}
-/******************************************************************************************/
-#define CM_ALTSTACK_MICROSECONDS    __ts__
-
-
-/******************************************************************************************/
-
-
-/******************************************************************************************/
 int *cm_wrap_main(char **argv){
   long stk_max, vla_sz;
   int  ret;
@@ -222,14 +232,13 @@ int *cm_wrap_main(char **argv){
 
   ret = altstack(stk_max, CM_ALTSTACK_WRAP_FUNCTION, (void *)vla_sz, &out);
   unsigned long __ended = CM_ALTSTACK_MICROSECONDS();
-  CM_ALTSTACK_EXECUTE_MEMORY_USAGE_COMMANDS
-  unsigned long __dur = __ended - __started;
+  unsigned long __dur   = __ended - __started;
 
-  log_debug("Duration:%lums", __dur);
-  log_debug("Duration:%s", milliseconds_to_long_string(__dur / 1000));
-  log_debug("Duration:%s", milliseconds_to_string(__dur / 1000));
-  log_debug("%s", CM_ALTSTACK_RSS);
-  log_debug("%s", CM_ALTSTACK_MAPS);
+  char          *dur = (__dur > 1000 * 1000) ? milliseconds_to_long_string(__dur / 1000) : milliseconds_to_string(__dur / 1000);
+
+  log_debug("Duration:%s", dur);
+  //log_debug("%s", CM_ALTSTACK_RSS);
+  //log_debug("%s", CM_ALTSTACK_MAPS);
 
 
   if (ret) {
