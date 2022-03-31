@@ -1,0 +1,21 @@
+{
+    "name": "c_altstack",
+    "version": "",
+    "repo": "binRick/c_altstack",
+    "description": "C Altstack execution wrapper",
+    "keywords": [
+        "c",
+        "altstack",
+        "module"
+    ],
+    "license": "MIT",
+    "makefile": "Makefile",
+    "install": "make install",
+    "dependencies": {
+        "clibs/module": "0.1.1",
+        "4thel00z/env.h": "0.1.0",
+        "clibs/flag": "0.0.1",
+        "binRick/c_base64": "9e7234ffb480fe91cc932032b46ea45a1de2a194",
+        "binRick/c_optparse": "ba0b01b8d484e5477c0068bb9e5178175d8593e0"
+    }
+}
